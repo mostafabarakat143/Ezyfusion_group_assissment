@@ -1,0 +1,9 @@
+{
+  "devDependencies": {
+    "supabase": "^2.122.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "prisma": "^6.19.3"
+  }
+}
