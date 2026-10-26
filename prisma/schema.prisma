@@ -1,8 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// Mirrors supabase/migrations. SQL migrations are the source of truth.
+// Auth users live in auth.users and are not managed by Prisma migrations.
 
 generator client {
   provider = "prisma-client"
@@ -14,14 +11,237 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum MembershipRole {
+  manager
+  staff
 
-model TestUser {
-  id         String   @id @default(uuid()) @db.Uuid
-  name       String
-  email      String   @unique
-  createdAt  DateTime @default(now())
+  @@map("membership_role")
+}
 
-  authUserId String?  @map("auth_user_id") @db.Uuid
+enum InvoiceKind {
+  deposit
+  rent
 
-  @@map("test_users")
+  @@map("invoice_kind")
+}
+
+enum PaymentMethod {
+  cash
+  bank_transfer
+  online
+
+  @@map("payment_method")
+}
+
+enum PaymentStatus {
+  pending_verification
+  approved
+  rejected
+  voided
+
+  @@map("payment_status")
+}
+
+enum GatewayBillStatus {
+  pending
+  paid
+  failed
+
+  @@map("gateway_bill_status")
+}
+
+model Organization {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  memberships         Membership[]
+  units               Unit[]
+  tenants             Tenant[]
+  leases              Lease[]
+  invoices            Invoice[]
+  payments            Payment[]
+  paymentAllocations  PaymentAllocation[]
+  gatewayBills        GatewayBill[]
+
+  @@map("organizations")
+}
+
+model Membership {
+  userId    String         @map("user_id") @db.Uuid
+  orgId     String         @map("org_id") @db.Uuid
+  role      MembershipRole
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@id([userId, orgId])
+  @@unique([userId])
+  @@index([orgId])
+  @@map("memberships")
+}
+
+model Unit {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  leases       Lease[]
+
+  @@unique([orgId, id])
+  @@unique([orgId, name])
+  @@index([orgId])
+  @@map("units")
+}
+
+model Tenant {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  fullName  String   @map("full_name")
+  email     String
+  phone     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  leases       Lease[]
+
+  @@unique([orgId, id])
+  @@unique([userId])
+  @@unique([orgId, email])
+  @@index([orgId])
+  @@map("tenants")
+}
+
+model Lease {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId          String   @map("org_id") @db.Uuid
+  unitId         String   @map("unit_id") @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  startDate      DateTime @map("start_date") @db.Date
+  endDate        DateTime @map("end_date") @db.Date
+  monthlyRentSen BigInt   @map("monthly_rent_sen")
+  depositSen     BigInt   @map("deposit_sen")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  unit         Unit         @relation(fields: [orgId, unitId], references: [orgId, id], onDelete: Restrict)
+  tenant       Tenant       @relation(fields: [orgId, tenantId], references: [orgId, id], onDelete: Restrict)
+  invoices     Invoice[]
+  payments     Payment[]
+  gatewayBills GatewayBill[]
+
+  @@unique([orgId, id])
+  @@index([orgId])
+  @@index([unitId])
+  @@index([tenantId])
+  @@map("leases")
+}
+
+model Invoice {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId       String      @map("org_id") @db.Uuid
+  leaseId     String      @map("lease_id") @db.Uuid
+  kind        InvoiceKind
+  periodIndex Int?        @map("period_index")
+  periodStart DateTime?   @map("period_start") @db.Date
+  periodEnd   DateTime?   @map("period_end") @db.Date
+  dueDate     DateTime    @map("due_date") @db.Date
+  amountSen   BigInt      @map("amount_sen")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lease        Lease               @relation(fields: [orgId, leaseId], references: [orgId, id], onDelete: Cascade)
+  allocations  PaymentAllocation[]
+
+  @@unique([orgId, id])
+  // DB: UNIQUE NULLS NOT DISTINCT (lease_id, kind, period_index) — see SQL migration.
+  @@unique([leaseId, kind, periodIndex], map: "invoices_lease_period_key")
+  @@index([orgId])
+  @@index([leaseId])
+  @@map("invoices")
+}
+
+model GatewayBill {
+  id        String            @id
+  orgId     String            @map("org_id") @db.Uuid
+  leaseId   String            @map("lease_id") @db.Uuid
+  amountSen BigInt            @map("amount_sen")
+  status    GatewayBillStatus @default(pending)
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lease        Lease        @relation(fields: [orgId, leaseId], references: [orgId, id], onDelete: Restrict)
+  payment      Payment?
+
+  @@unique([orgId, id])
+  @@index([orgId])
+  @@index([leaseId])
+  @@map("gateway_bills")
+}
+
+model Payment {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId         String        @map("org_id") @db.Uuid
+  leaseId       String        @map("lease_id") @db.Uuid
+  amountSen     BigInt        @map("amount_sen")
+  unappliedSen  BigInt        @default(0) @map("unapplied_sen")
+  method        PaymentMethod
+  status        PaymentStatus
+  receivedAt    DateTime      @map("received_at") @db.Timestamptz(6)
+  slipPath      String?       @map("slip_path")
+  gatewayBillId String?       @map("gateway_bill_id")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lease        Lease               @relation(fields: [orgId, leaseId], references: [orgId, id], onDelete: Restrict)
+  gatewayBill  GatewayBill?        @relation(fields: [orgId, gatewayBillId], references: [orgId, id], onDelete: Restrict)
+  allocations  PaymentAllocation[]
+
+  @@unique([orgId, id])
+  @@unique([gatewayBillId], map: "payments_gateway_bill_id_key")
+  @@unique([orgId, gatewayBillId], map: "payments_org_gateway_bill_key")
+  @@index([orgId])
+  @@index([leaseId])
+  @@map("payments")
+}
+
+model PaymentAllocation {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  paymentId String   @map("payment_id") @db.Uuid
+  invoiceId String   @map("invoice_id") @db.Uuid
+  amountSen BigInt   @map("amount_sen")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  payment      Payment      @relation(fields: [orgId, paymentId], references: [orgId, id], onDelete: Cascade)
+  invoice      Invoice      @relation(fields: [orgId, invoiceId], references: [orgId, id], onDelete: Restrict)
+
+  @@unique([orgId, id])
+  @@unique([paymentId, invoiceId])
+  @@index([orgId])
+  @@index([paymentId])
+  @@index([invoiceId])
+  @@map("payment_allocations")
+}
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // No FK to organizations: cascade truncate/delete must not erase append-only history.
+  orgId     String   @map("org_id") @db.Uuid
+  actorId   String?  @map("actor_id") @db.Uuid
+  action    String
+  entityId  String   @map("entity_id")
+  details   Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([orgId])
+  @@index([orgId, createdAt])
+  @@map("audit_log")
 }

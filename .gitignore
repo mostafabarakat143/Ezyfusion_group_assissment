@@ -1,8 +1,24 @@
 node_modules
-# Keep environment variables out of version control
-.env
 
+# environment and local secrets (.env.example is committed)
+.env
+.env.local
+.env*.local
+
+# generated Prisma client
 /generated/prisma
 
 # Supabase CLI temp / local secrets
 supabase/.temp/
+
+# Next.js
+.next
+out
+.vercel
+next-env.d.ts
+*.tsbuildinfo
+
+# tests and OS
+coverage
+.DS_Store
+npm-debug.log*

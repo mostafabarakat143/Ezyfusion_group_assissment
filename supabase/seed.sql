@@ -1,0 +1,1 @@
+-- Schema is rebuilt by `supabase db reset`. No practice rows are seeded.
